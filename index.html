@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sofía — Asesora Virtual Sapienza</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #e5ddd5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+
+    #chat-wrapper {
+      width: 100%;
+      max-width: 420px;
+      height: 100vh;
+      max-height: 780px;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+    }
+
+    /* Header */
+    #chat-header {
+      background: #075e54;
+      color: #fff;
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    #chat-header .avatar {
+      width: 42px; height: 42px;
+      border-radius: 50%;
+      background: #25d366;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+      flex-shrink: 0;
+    }
+    #chat-header .info .name { font-weight: 600; font-size: 15px; }
+    #chat-header .info .status { font-size: 12px; opacity: .75; }
+
+    /* Messages */
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: #e5ddd5;
+    }
+
+    .bubble {
+      max-width: 82%;
+      padding: 8px 12px 6px;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .bubble .time {
+      font-size: 10px;
+      opacity: .55;
+      text-align: right;
+      margin-top: 3px;
+    }
+    .bubble.bot {
+      background: #fff;
+      align-self: flex-start;
+      border-top-left-radius: 2px;
+    }
+    .bubble.user {
+      background: #dcf8c6;
+      align-self: flex-end;
+      border-top-right-radius: 2px;
+    }
+
+    /* Typing indicator */
+    .typing-bubble {
+      background: #fff;
+      align-self: flex-start;
+      border-radius: 8px;
+      border-top-left-radius: 2px;
+      padding: 10px 14px;
+      display: flex; gap: 5px; align-items: center;
+    }
+    .typing-bubble span {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #aaa;
+      animation: bounce 1.2s infinite;
+    }
+    .typing-bubble span:nth-child(2) { animation-delay: .2s; }
+    .typing-bubble span:nth-child(3) { animation-delay: .4s; }
+    @keyframes bounce {
+      0%, 80%, 100% { transform: translateY(0); }
+      40% { transform: translateY(-6px); }
+    }
+
+    /* Input */
+    #input-area {
+      background: #f0f0f0;
+      padding: 8px 10px;
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+    #user-input {
+      flex: 1;
+      border: none;
+      border-radius: 20px;
+      padding: 9px 14px;
+      font-size: 14px;
+      outline: none;
+      resize: none;
+      max-height: 100px;
+      background: #fff;
+      line-height: 1.4;
+    }
+    #send-btn {
+      width: 42px; height: 42px;
+      border-radius: 50%;
+      background: #075e54;
+      border: none;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: background .15s;
+    }
+    #send-btn:hover { background: #128c7e; }
+    #send-btn svg { fill: #fff; width: 20px; height: 20px; }
+    #send-btn:disabled { background: #ccc; cursor: default; }
+  </style>
+</head>
+<body>
+
+<div id="chat-wrapper">
+  <div id="chat-header">
+    <div class="avatar">🎓</div>
+    <div class="info">
+      <div class="name">Sofía · Sapienza</div>
+      <div class="status">Asesora Virtual de Admisiones</div>
+    </div>
+  </div>
+
+  <div id="messages"></div>
+
+  <div id="input-area">
+    <textarea id="user-input" rows="1" placeholder="Escribe un mensaje..."></textarea>
+    <button id="send-btn" title="Enviar">
+      <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+    </button>
+  </div>
+</div>
+
+<script>
+  const API_URL = '/chat';
+
+  const SYSTEM_PROMPT = `Eres **"Sofía"**, asesora virtual de admisiones de la **Corporación Tecnológica de Educación Superior Sapienza (CTES)** en WhatsApp. Tu objetivo es resolver dudas de prospectos sobre la Especialización en Gestión de Proyectos Estratégicos y las Maestrías en convenio con FUAC, y avanzarlos hacia la inscripción.
+
+# Reglas inviolables
+
+1. **Solo usas la información de la BASE DE CONOCIMIENTO** que se te entrega al final de este mensaje. No inventes datos, precios, fechas, profesores, ni programas que no estén en la KB.
+2. **Si la información NO está en la KB**, responde: "Para información más específica, un asesor de admisiones se pondrá en contacto contigo 📲. ¿Deseas agendar una cita con un asesor humano?"
+3. **Distingue programas correctamente**: La Especialización es programa propio de Sapienza (SNIES 117669). Las Maestrías son en convenio con FUAC y el título lo otorga FUAC.
+4. **Valores económicos exactos**: Inscripción $116.061, Especialización $6.300.000 con descuento (válido hasta 23 de abril de 2026), valor oficial $13.294.260.
+5. **Nunca pidas datos sensibles** (clave bancaria, número de tarjeta, CVV).
+
+# Estilo de respuesta WhatsApp
+
+- **Cortas**: 2-5 líneas máximo por mensaje.
+- **Tono cercano y profesional**, tutea al usuario.
+- **Emojis con moderación**: 🎓 💰 📌 ✅ 📲 📆 💻. Máximo 2-3 por mensaje.
+- **Negrita con asteriscos** estilo WhatsApp: *texto*.
+- **No uses encabezados** (# ##). Esto es chat, no documento.
+
+# Flujo conversacional
+
+**Apertura**: saluda, preséntate brevemente y pregunta en qué ayudas.
+**Discovery**: si la pregunta es vaga, pregunta qué le interesa más antes de dar todo.
+**Cierre comercial**: cuando detectes intención de inscripción, pide: nombre completo, cédula, correo, ciudad y título de pregrado.
+**Pago**: cuando pidan link de pago, entrega: https://www.mipagoamigo.com/MPA_WebSite/ServicePayments — Convenio: CORP TECNOLOGICA DE EDU SUPERIOR SAPIENZA CTE — Valor inscripción: $116.061
+
+---
+
+# BASE DE CONOCIMIENTO
+
+## 1. Institución
+
+Corporación Tecnológica de Educación Superior Sapienza — CTES. Sede: Carrera 14A # 71-29, Barrios Unidos, Bogotá. Web: https://sapienza.edu.co
+
+## 2. Especialización en Gestión de Proyectos Estratégicos
+
+- SNIES: 117669. Resolución MEN 018631 del 22/10/2024 (vigencia 7 años).
+- Modalidad: Virtual sincrónica + asincrónica. 100% virtual, no requiere presencia.
+- Duración: 6 meses, 2 periodos académicos, 24 créditos, 9 asignaturas (2 electivas).
+- Horario: Nocturno, martes, miércoles y jueves, 6:30 p.m. – 9:45 p.m. (sujeto a programación).
+- Vacaciones: 15 días entre periodos.
+- Título: Especialista en Gestión de Proyectos Estratégicos. Lo otorga Sapienza.
+- Requisito de grado: trabajo/seminario aprobado + certificación inglés B1 (MCER).
+
+### Inversión
+
+| Concepto | Valor |
+|---|---|
+| Inscripción | $116.061 |
+| Valor oficial MEN | $13.294.260 |
+| Descuento promocional | $6.300.000 (hasta 23 abr 2026) |
+| Pago completo 15% dto. adicional | $5.650.061 |
+
+### Formas de pago
+
+Pago completo, 50/50 por periodo, Credity (sin intereses), Fincomercio, Valcredit, Comuna, ICETEX, cesantías, PSE, BRE-B, Nequi, tarjeta débito/crédito, Bolt.
+
+### Certificaciones incluidas
+
+PMP – PMI, SCRUM / SCRUM Master / LEAN, ISO 21500, ISO 31000, MGA (Metodología General Ajustada).
+
+### Plan de estudios
+
+Periodo 1: Formulación de proyectos, Estrategia y competitividad, Planificación y gestión de recursos y presupuestos, Electiva I (SCRUM o Habilidades Gerenciales).
+Periodo 2: Gestión del desempeño y evaluación de proyectos, Gerencia de proyectos, Gestión de calidad, Electiva II (ISO 21500/31000), Seminario de Investigación.
+
+### Opciones de grado
+
+1. Certificación internacional (PMP, SCRUM, ISO, MGA).
+2. Trabajo/tesis de grado (sin costo).
+3. Seminario de grado.
+4. Grupo de investigación Sapienza con publicaciones arbitradas.
+
+## 3. Maestrías en convenio con FUAC
+
+- El título lo otorga la Universidad Autónoma de Colombia (FUAC). Sapienza opera el convenio comercial.
+- Maestrías disponibles: Administración de Negocios Internacionales, Derecho Público, Derecho Laboral y Seguridad Social.
+- Homologación al 50%: aplica si tienes especialización afín. Se determina una vez activo y matriculado. Con homologación: 2 periodos (vs 4 completos).
+- Si no alcanza 50% de homologación: solo toma curso de nivelación FUAC, costo total $2.104.925.
+- Modalidad Presencial Asistida: clase en vivo y sincronizada, NO queda grabada.
+- Financiación: Credity sin intereses, Fincomercio, Valcredit, Comuna, ICETEX, cesantías.
+- Inglés: se puede homologar con certificación B1 vigente que cumpla criterios FUAC.
+
+## 4. Proceso de admisión
+
+1. Preinscripción en plataforma Q10 de Sapienza.
+2. Documentos: cédula (150%), diploma y acta de pregrado, prueba Saber 11, foto 3x4 digital, EPS o Sisbén, comprobante de inscripción ($116.061), formato de matrícula, acta de compromiso si hay pendientes.
+3. Carga de documentos: https://docs.google.com/forms/d/e/1FAIpQLSd9B7gDIJrBQwej4-qAtZWKoKcAfpThZ52i45fVh6W9b1662w/viewform
+4. Link de pago inscripción: https://www.mipagoamigo.com/MPA_WebSite/ServicePayments — Convenio: CORP TECNOLOGICA DE EDU SUPERIOR SAPIENZA CTE
+
+## 5. Aplazamiento y devoluciones
+
+- Aplazamiento: máximo 1 año, solo una vez.
+- Devoluciones: según Reglamento Estudiantil, Acuerdo 007 de Sapienza.
+
+## 6. Créditos educativos
+
+Administrados desde el 30/05/2025 por LEXCAPITAL Abogados & Inversiones S.A.S. — lexcapital01@sapienza.edu.co · Tel. 301 5125820`;
+
+  const history = [];
+  const messagesEl = document.getElementById('messages');
+  const inputEl = document.getElementById('user-input');
+  const sendBtn = document.getElementById('send-btn');
+
+  function timestamp() {
+    return new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function addBubble(text, role) {
+    const div = document.createElement('div');
+    div.className = `bubble ${role}`;
+    div.textContent = text;
+    const t = document.createElement('div');
+    t.className = 'time';
+    t.textContent = timestamp();
+    div.appendChild(t);
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return div;
+  }
+
+  function showTyping() {
+    const div = document.createElement('div');
+    div.className = 'typing-bubble';
+    div.id = 'typing';
+    div.innerHTML = '<span></span><span></span><span></span>';
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function hideTyping() {
+    const t = document.getElementById('typing');
+    if (t) t.remove();
+  }
+
+  async function sendMessage() {
+    const text = inputEl.value.trim();
+    if (!text) return;
+
+    inputEl.value = '';
+    inputEl.style.height = 'auto';
+    sendBtn.disabled = true;
+
+    addBubble(text, 'user');
+    history.push({ role: 'user', parts: [{ text }] });
+
+    showTyping();
+
+    try {
+      const body = {
+        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents: history,
+        generationConfig: {
+          temperature: 0.4,
+          maxOutputTokens: 512
+        }
+      };
+
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error?.message || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || '(Sin respuesta)';
+
+      hideTyping();
+      addBubble(reply, 'bot');
+      history.push({ role: 'model', parts: [{ text: reply }] });
+
+    } catch (e) {
+      hideTyping();
+      addBubble(`❌ Error al conectar con la IA: ${e.message}`, 'bot');
+    }
+
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+
+  // Auto-resize textarea
+  inputEl.addEventListener('input', () => {
+    inputEl.style.height = 'auto';
+    inputEl.style.height = inputEl.scrollHeight + 'px';
+  });
+
+  inputEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  sendBtn.addEventListener('click', sendMessage);
+
+  // Saludo inicial
+  window.addEventListener('load', () => {
+    addBubble('¡Hola! 👋 Soy Sofía, asesora virtual de admisiones de Sapienza. Estoy aquí para resolver tus dudas sobre nuestra *Especialización en Gestión de Proyectos Estratégicos* y las maestrías en convenio. ¿En qué puedo ayudarte hoy?', 'bot');
+    history.push({ role: 'model', parts: [{ text: '¡Hola! 👋 Soy Sofía, asesora virtual de admisiones de Sapienza. Estoy aquí para resolver tus dudas sobre nuestra *Especialización en Gestión de Proyectos Estratégicos* y las maestrías en convenio. ¿En qué puedo ayudarte hoy?' }] });
+  });
+</script>
+
+</body>
+</html>
