@@ -1,12 +1,14 @@
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json, urllib.request, urllib.parse, os
 
-# Lee credenciales desde variables de entorno
-API_KEY            = os.environ.get('GEMINI_API_KEY', '')
-TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
-TWILIO_AUTH_TOKEN  = os.environ.get('TWILIO_AUTH_TOKEN', '')
+GEMINI_MODEL = 'gemini-2.5-flash'
 
-API_URL = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={API_KEY}'
+def get_api_url():
+    key = os.environ.get('GEMINI_API_KEY', '')
+    return f'https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={key}'
+
+def get_twilio_creds():
+    return os.environ.get('TWILIO_ACCOUNT_SID', ''), os.environ.get('TWILIO_AUTH_TOKEN', '')
 
 SYSTEM_PROMPT = """Eres "Sofía", asesora virtual de admisiones de la Corporación Tecnológica de Educación Superior Sapienza (CTES) en WhatsApp. Tu objetivo es resolver dudas de prospectos sobre TODOS los programas de Sapienza y avanzarlos hacia la inscripción.
 
@@ -181,7 +183,7 @@ def call_gemini(history):
         'contents': history,
         'generationConfig': {'temperature': 0.4, 'maxOutputTokens': 512}
     }).encode()
-    req = urllib.request.Request(API_URL, data=body,
+    req = urllib.request.Request(get_api_url(), data=body,
                                   headers={'Content-Type': 'application/json'}, method='POST')
     with urllib.request.urlopen(req) as r:
         data = json.loads(r.read())
@@ -233,16 +235,7 @@ class Handler(BaseHTTPRequestHandler):
             user_text = params.get('Body', '').strip()
             print(f"WhatsApp [{from_number}]: {user_text}")
 
-            # Leer credenciales Twilio del archivo .env si existen
-            account_sid = TWILIO_ACCOUNT_SID
-            auth_token  = TWILIO_AUTH_TOKEN
-            env_path = os.path.join(os.path.dirname(__file__), '.env')
-            if os.path.exists(env_path):
-                for line in open(env_path):
-                    if line.startswith('TWILIO_ACCOUNT_SID='):
-                        account_sid = line.split('=',1)[1].strip()
-                    elif line.startswith('TWILIO_AUTH_TOKEN='):
-                        auth_token = line.split('=',1)[1].strip()
+            account_sid, auth_token = get_twilio_creds()
 
             if from_number not in sessions:
                 sessions[from_number] = []
@@ -269,7 +262,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 body = json.loads(raw)
                 req = urllib.request.Request(
-                    API_URL, data=json.dumps(body).encode(),
+                    get_api_url(), data=json.dumps(body).encode(),
                     headers={'Content-Type': 'application/json'}, method='POST')
                 with urllib.request.urlopen(req) as r:
                     result = r.read()
