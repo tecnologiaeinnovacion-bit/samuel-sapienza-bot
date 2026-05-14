@@ -1,5 +1,5 @@
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import json, urllib.request, urllib.parse, os, re
+import json, urllib.request, urllib.parse, os, re, threading, time
 
 GEMINI_MODEL = 'gemini-2.5-flash'
 
@@ -397,6 +397,19 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+def keep_alive():
+    """Hace ping al propio servidor cada 14 minutos para evitar el sleep de Render."""
+    time.sleep(60)  # espera 1 min al arrancar antes del primer ping
+    while True:
+        try:
+            url = os.environ.get('RENDER_EXTERNAL_URL', 'http://localhost:8080')
+            urllib.request.urlopen(f'{url}/', timeout=10)
+            print('[keep-alive] ping OK')
+        except Exception as e:
+            print(f'[keep-alive] {e}')
+        time.sleep(14 * 60)
+
 if __name__ == '__main__':
+    threading.Thread(target=keep_alive, daemon=True).start()
     print('Servidor corriendo en http://localhost:8080')
     HTTPServer(('', 8080), Handler).serve_forever()
