@@ -331,22 +331,28 @@ class Handler(BaseHTTPRequestHandler):
                     {'role': 'model', 'parts': [{'text': raw_reply}]}
                 )
 
-                # Procesar acción CRM si viene
+                # Procesar acción CRM en background (no bloquea la respuesta)
                 if crm_action:
-                    # Si ya tenemos rowNumber en sesión, inyectarlo en agendar_cita
-                    if crm_action.get('action') == 'agendar_cita' and sessions[from_number].get('row_number'):
-                        crm_action['rowNumber'] = sessions[from_number]['row_number']
-
-                    result = call_crm(crm_action, from_number)
-                    if result and result.get('ok') and result.get('rowNumber'):
-                        sessions[from_number]['row_number'] = result['rowNumber']
+                    try:
+                        if crm_action.get('action') == 'agendar_cita' and sessions[from_number].get('row_number'):
+                            crm_action['rowNumber'] = sessions[from_number]['row_number']
+                        result = call_crm(crm_action, from_number)
+                        if result and result.get('ok') and result.get('rowNumber'):
+                            sessions[from_number]['row_number'] = result['rowNumber']
+                    except Exception as crm_err:
+                        print(f'[CRM] Error no crítico: {crm_err}')
 
                 if account_sid and auth_token:
                     send_whatsapp(from_number, clean_reply, account_sid, auth_token)
 
             except Exception as e:
-                clean_reply = f'Error: {e}'
-                print(clean_reply)
+                print(f'[ERROR whatsapp handler] {e}')
+                clean_reply = 'Hola, tuve un problema técnico. Por favor escribe de nuevo en un momento 🙏'
+                try:
+                    if account_sid and auth_token:
+                        send_whatsapp(from_number, clean_reply, account_sid, auth_token)
+                except Exception:
+                    pass
 
             self.send_response(200)
             self.send_header('Content-Type', 'text/xml')
