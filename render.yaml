@@ -11,3 +11,7 @@ services:
         sync: false
       - key: TWILIO_AUTH_TOKEN
         sync: false
+      - key: APPS_SCRIPT_URL
+        sync: false
+      - key: BOT_SECRET
+        sync: false

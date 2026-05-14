@@ -1,5 +1,5 @@
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import json, urllib.request, urllib.parse, os
+import json, urllib.request, urllib.parse, os, re
 
 GEMINI_MODEL = 'gemini-2.5-flash'
 
@@ -10,7 +10,13 @@ def get_api_url():
 def get_twilio_creds():
     return os.environ.get('TWILIO_ACCOUNT_SID', ''), os.environ.get('TWILIO_AUTH_TOKEN', '')
 
-SYSTEM_PROMPT = """Eres "Sofía", asesora virtual de admisiones de la Corporación Tecnológica de Educación Superior Sapienza (CTES) en WhatsApp. Tu objetivo es resolver dudas de prospectos sobre TODOS los programas de Sapienza y avanzarlos hacia la inscripción.
+def get_crm_url():
+    return os.environ.get('APPS_SCRIPT_URL', '')
+
+def get_bot_secret():
+    return os.environ.get('BOT_SECRET', '')
+
+SYSTEM_PROMPT = """Eres "Samuel", asesor virtual de admisiones de la Corporación Tecnológica de Educación Superior Sapienza (CTES) en WhatsApp. Tu objetivo es resolver dudas de prospectos sobre TODOS los programas de Sapienza, recopilar sus datos y avanzarlos hacia la inscripción o una cita con un asesor humano.
 
 REGLAS INVIOLABLES:
 1. Solo usas la información de la BASE DE CONOCIMIENTO. No inventes datos, precios, fechas ni programas.
@@ -20,6 +26,34 @@ REGLAS INVIOLABLES:
 5. Valores exactos tal como están en la KB. No redondees ni estimes.
 6. Nunca pidas datos sensibles (clave bancaria, tarjeta, CVV).
 
+RECOPILACIÓN DE DATOS (MUY IMPORTANTE):
+- Tu objetivo secundario es recopilar estos datos del prospecto de forma natural durante la conversación:
+  • Nombre completo
+  • Teléfono (si contacta por otro medio) o el que ya tienes por WhatsApp
+  • Email / correo electrónico
+  • Programa de interés
+  • Nivel de estudios (si tiene especialización/posgrado o no)
+- NO pidas todos los datos de golpe. Recupéralos naturalmente durante la charla.
+- Cuando tengas al menos nombre + programa de interés, incluye en tu respuesta el bloque JSON de CRM (ver formato abajo).
+- Cuando el prospecto quiera agendar una cita, pregunta: día y hora preferida. Luego incluye el bloque JSON de cita.
+
+FORMATO JSON CRM (incluye SOLO cuando tengas datos nuevos, al final del mensaje, entre triple backticks):
+```crm_action
+{"action":"upsert_lead","nombre":"...","email":"...","programa":"...","nivel":"...","observacion":"..."}
+```
+
+FORMATO JSON CITA (incluye cuando el prospecto confirme día y hora):
+```crm_action
+{"action":"agendar_cita","fecha":"YYYY-MM-DD","hora":"HH:MM","nombre":"...","programa":"..."}
+```
+
+INSTRUCCIONES PARA EL BLOQUE CRM:
+- Incluye solo los campos que YA tienes. Omite los campos vacíos o desconocidos.
+- El campo "observacion" debe resumir el interés del prospecto en 1 línea.
+- Para la fecha de cita usa siempre formato YYYY-MM-DD (ej: 2026-05-20).
+- El bloque ```crm_action``` NO es visible para el usuario, solo para el sistema.
+- Después del bloque puedes seguir con más texto normal si es necesario.
+
 ESTILO WHATSAPP:
 - Mensajes cortos: 2-5 líneas máximo.
 - Tono cercano y profesional, tutea al usuario.
@@ -28,7 +62,7 @@ ESTILO WHATSAPP:
 - Sin encabezados (#). Esto es chat.
 
 FLUJO:
-- Apertura: saluda, preséntate y pregunta en qué ayudas.
+- Apertura: saluda, preséntate como Samuel y pregunta en qué ayudas.
 - Discovery: si la pregunta es vaga, pregunta por qué programa o nivel le interesa.
 - Cierre: cuando detectes intención de inscripción pide nombre completo, cédula, correo, ciudad y título de pregrado.
 - Pago inscripción: https://www.mipagoamigo.com/MPA_WebSite/ServicePayments — Convenio: CORP TECNOLOGICA DE EDU SUPERIOR SAPIENZA CTE
@@ -175,13 +209,14 @@ Carga de documentos: https://docs.google.com/forms/d/e/1FAIpQLSd9B7gDIJrBQwej4-q
 Pago inscripción: https://www.mipagoamigo.com/MPA_WebSite/ServicePayments"""
 
 # Historial por número de teléfono
+# Formato: { phone: { history: [...], lead_data: {...} } }
 sessions = {}
 
 def call_gemini(history):
     body = json.dumps({
         'system_instruction': {'parts': [{'text': SYSTEM_PROMPT}]},
         'contents': history,
-        'generationConfig': {'temperature': 0.4, 'maxOutputTokens': 512}
+        'generationConfig': {'temperature': 0.4, 'maxOutputTokens': 600}
     }).encode()
     req = urllib.request.Request(get_api_url(), data=body,
                                   headers={'Content-Type': 'application/json'}, method='POST')
@@ -205,6 +240,50 @@ def send_whatsapp(to, body_text, account_sid, auth_token):
                                   method='POST')
     with urllib.request.urlopen(req) as r:
         return json.loads(r.read())
+
+def extract_crm_action(text):
+    """Extrae el bloque ```crm_action ... ``` del texto de Samuel y retorna (texto_limpio, dict_accion)."""
+    pattern = r'```crm_action\s*([\s\S]*?)```'
+    match = re.search(pattern, text)
+    if not match:
+        return text, None
+    raw_json = match.group(1).strip()
+    clean_text = re.sub(pattern, '', text).strip()
+    try:
+        action = json.loads(raw_json)
+        return clean_text, action
+    except Exception:
+        return clean_text, None
+
+def call_crm(action_dict, phone_number):
+    """Envía la acción al Apps Script del CRM."""
+    crm_url = get_crm_url()
+    if not crm_url:
+        print('[CRM] APPS_SCRIPT_URL no configurada, omitiendo.')
+        return None
+
+    # Agregar teléfono si no viene en el dict
+    if 'telefono' not in action_dict:
+        # Quitar prefijo 'whatsapp:' si viene de Twilio
+        phone = phone_number.replace('whatsapp:', '').strip()
+        action_dict['telefono'] = phone
+
+    action_dict['secret'] = get_bot_secret()
+
+    body = json.dumps(action_dict).encode()
+    try:
+        req = urllib.request.Request(crm_url, data=body,
+                                      headers={'Content-Type': 'application/json'},
+                                      method='POST')
+        with urllib.request.urlopen(req, timeout=10) as r:
+            result = json.loads(r.read())
+            print(f'[CRM] {result}')
+
+            # Guardar rowNumber en sesión para acciones futuras (agendar_cita)
+            return result
+    except Exception as e:
+        print(f'[CRM] Error al llamar Apps Script: {e}')
+        return None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -238,19 +317,37 @@ class Handler(BaseHTTPRequestHandler):
             account_sid, auth_token = get_twilio_creds()
 
             if from_number not in sessions:
-                sessions[from_number] = []
-            sessions[from_number].append({'role': 'user', 'parts': [{'text': user_text}]})
+                sessions[from_number] = {'history': [], 'lead_data': {}, 'row_number': None}
+
+            sessions[from_number]['history'].append(
+                {'role': 'user', 'parts': [{'text': user_text}]}
+            )
 
             try:
-                reply = call_gemini(sessions[from_number])
-                sessions[from_number].append({'role': 'model', 'parts': [{'text': reply}]})
-                if account_sid and auth_token:
-                    send_whatsapp(from_number, reply, account_sid, auth_token)
-            except Exception as e:
-                reply = f'Error: {e}'
-                print(reply)
+                raw_reply = call_gemini(sessions[from_number]['history'])
+                clean_reply, crm_action = extract_crm_action(raw_reply)
 
-            # Twilio espera TwiML o 200 vacío
+                sessions[from_number]['history'].append(
+                    {'role': 'model', 'parts': [{'text': raw_reply}]}
+                )
+
+                # Procesar acción CRM si viene
+                if crm_action:
+                    # Si ya tenemos rowNumber en sesión, inyectarlo en agendar_cita
+                    if crm_action.get('action') == 'agendar_cita' and sessions[from_number].get('row_number'):
+                        crm_action['rowNumber'] = sessions[from_number]['row_number']
+
+                    result = call_crm(crm_action, from_number)
+                    if result and result.get('ok') and result.get('rowNumber'):
+                        sessions[from_number]['row_number'] = result['rowNumber']
+
+                if account_sid and auth_token:
+                    send_whatsapp(from_number, clean_reply, account_sid, auth_token)
+
+            except Exception as e:
+                clean_reply = f'Error: {e}'
+                print(clean_reply)
+
             self.send_response(200)
             self.send_header('Content-Type', 'text/xml')
             self.end_headers()
